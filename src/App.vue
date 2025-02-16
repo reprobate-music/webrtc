@@ -21,20 +21,17 @@ const localStream = ref(null);
 const remoteStream = ref(null);
 const roomId = ref(null);
 const peerConnection = ref(null);
-const incomingOffer = ref(null); // Хранение входящего предложения
+const incomingOffer = ref(null);
 
-// Конфигурация ICE-серверов (STUN/TURN)
+// Конфигурация ICE-серверов
 const iceServers = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' }, // Google STUN
-    // Добавьте TURN-серверы при необходимости
-  ],
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 };
 
 // Инициализация WebRTC
 const initializeWebRTC = async () => {
   try {
-    // Получение локального медиапотока (аудио и видео)
+    // Получение локального медиапотока
     localStream.value = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     localVideo.value.srcObject = localStream.value;
 
@@ -48,14 +45,17 @@ const initializeWebRTC = async () => {
 
     // Обработка входящих треков
     peerConnection.value.ontrack = (event) => {
-      remoteStream.value = event.streams[0];
-      remoteVideo.value.srcObject = remoteStream.value;
+      if (!remoteStream.value) {
+        remoteStream.value = new MediaStream();
+        remoteVideo.value.srcObject = remoteStream.value;
+      }
+      remoteStream.value.addTrack(event.track);
     };
 
     // Обработка ICE-кандидатов
     peerConnection.value.onicecandidate = (event) => {
       if (event.candidate) {
-        // Отправка ICE-кандидата через Laravel Echo
+        // Отправка ICE-кандидатов через Laravel Echo
         window.Echo.private(`room-${roomId.value}`).whisper('ice-candidate', {
           candidate: event.candidate,
         });
@@ -69,11 +69,9 @@ const initializeWebRTC = async () => {
 // Начало звонка
 const startCall = async () => {
   try {
-    // Создание предложения (offer)
     const offer = await peerConnection.value.createOffer();
     await peerConnection.value.setLocalDescription(offer);
 
-    // Отправка предложения через Laravel Echo
     window.Echo.private(`room-${roomId.value}`).whisper('offer', {
       offer: peerConnection.value.localDescription,
     });
@@ -84,22 +82,20 @@ const startCall = async () => {
 
 // Ответ на звонок
 const answerCall = async () => {
-  if (!incomingOffer.value) return;
-
   try {
-    // Установка удаленного описания (предложение от инициатора)
-    await peerConnection.value.setRemoteDescription(new RTCSessionDescription(incomingOffer.value));
+    if (!incomingOffer.value) return;
 
-    // Создание ответа (answer)
+    await peerConnection.value.setRemoteDescription(
+        new RTCSessionDescription(incomingOffer.value)
+    );
+
     const answer = await peerConnection.value.createAnswer();
     await peerConnection.value.setLocalDescription(answer);
 
-    // Отправка ответа через Laravel Echo
     window.Echo.private(`room-${roomId.value}`).whisper('answer', {
       answer: peerConnection.value.localDescription,
     });
 
-    // Сброс входящего предложения
     incomingOffer.value = null;
   } catch (error) {
     console.error('Ошибка при ответе на звонок:', error);
@@ -112,9 +108,8 @@ const shareScreen = async () => {
     const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
     const screenTrack = screenStream.getVideoTracks()[0];
 
-    // Замена локального видео на экран
     const sender = peerConnection.value.getSenders().find((s) => s.track.kind === 'video');
-    sender.replaceTrack(screenTrack);
+    if (sender) sender.replaceTrack(screenTrack);
   } catch (error) {
     console.error('Ошибка при демонстрации экрана:', error);
   }
@@ -126,37 +121,30 @@ const toggleVideo = () => {
   videoTrack.enabled = !videoTrack.enabled;
 };
 
-// Обработка входящих сигналов через Laravel Echo
+// Обработка сигналов через Laravel Echo
 onMounted(async () => {
-  console.log(import.meta.env.VITE_MESSENGER_BASE_URL);
   await echoInit();
-  roomId.value = '123'; // Получение ID комнаты из URL
+  roomId.value = '123';
 
   // Подключение к комнате
   window.Echo.private(`room-${roomId.value}`)
       .listenForWhisper('offer', async ({ offer }) => {
-        try {
-          // Сохраняем входящее предложение
-          incomingOffer.value = offer;
-
-          // Уведомляем пользователя о входящем звонке
-          alert('Входящий звонок! Нажмите "Ответить на звонок", чтобы принять.');
-        } catch (error) {
-          console.error('Ошибка при обработке предложения:', error);
-        }
+        incomingOffer.value = offer;
+        alert('Входящий звонок! Нажмите "Ответить на звонок", чтобы принять.');
       })
       .listenForWhisper('answer', async ({ answer }) => {
-        try {
-          await peerConnection.value.setRemoteDescription(new RTCSessionDescription(answer));
-        } catch (error) {
-          console.error('Ошибка при обработке ответа:', error);
+        if (
+            peerConnection.value.signalingState === 'have-local-offer' ||
+            peerConnection.value.signalingState === 'stable'
+        ) {
+          await peerConnection.value.setRemoteDescription(
+              new RTCSessionDescription(answer)
+          );
         }
       })
       .listenForWhisper('ice-candidate', async ({ candidate }) => {
-        try {
+        if (candidate) {
           await peerConnection.value.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (error) {
-          console.error('Ошибка при добавлении ICE-кандидата:', error);
         }
       });
 
