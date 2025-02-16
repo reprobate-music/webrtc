@@ -22,6 +22,7 @@ const remoteStream = ref(null);
 const roomId = ref(null);
 const peerConnection = ref(null);
 const incomingOffer = ref(null);
+const pendingCandidates = ref([]); // Буфер для ICE-кандидатов
 
 // Конфигурация ICE-серверов
 const iceServers = {
@@ -66,6 +67,32 @@ const initializeWebRTC = async () => {
   }
 };
 
+// Обработка входящих ICE-кандидатов
+const handleIceCandidate = async (candidate) => {
+  if (peerConnection.value.remoteDescription) {
+    try {
+      await peerConnection.value.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (error) {
+      console.error('Ошибка при добавлении ICE-кандидата:', error);
+    }
+  } else {
+    // Если удалённое описание ещё не установлено, сохраняем кандидат в буфер
+    pendingCandidates.value.push(candidate);
+  }
+};
+
+// Обработка отложенных ICE-кандидатов
+const processPendingCandidates = async () => {
+  for (const candidate of pendingCandidates.value) {
+    try {
+      await peerConnection.value.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (error) {
+      console.error('Ошибка при обработке отложенных ICE-кандидатов:', error);
+    }
+  }
+  pendingCandidates.value = []; // Очищаем буфер после обработки
+};
+
 // Начало звонка
 const startCall = async () => {
   try {
@@ -97,28 +124,12 @@ const answerCall = async () => {
     });
 
     incomingOffer.value = null;
+
+    // Обработка всех отложенных ICE-кандидатов
+    await processPendingCandidates();
   } catch (error) {
     console.error('Ошибка при ответе на звонок:', error);
   }
-};
-
-// Демонстрация экрана
-const shareScreen = async () => {
-  try {
-    const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-    const screenTrack = screenStream.getVideoTracks()[0];
-
-    const sender = peerConnection.value.getSenders().find((s) => s.track.kind === 'video');
-    if (sender) sender.replaceTrack(screenTrack);
-  } catch (error) {
-    console.error('Ошибка при демонстрации экрана:', error);
-  }
-};
-
-// Включение/выключение видео
-const toggleVideo = () => {
-  const videoTrack = localStream.value.getVideoTracks()[0];
-  videoTrack.enabled = !videoTrack.enabled;
 };
 
 // Обработка сигналов через Laravel Echo
@@ -133,19 +144,24 @@ onMounted(async () => {
         alert('Входящий звонок! Нажмите "Ответить на звонок", чтобы принять.');
       })
       .listenForWhisper('answer', async ({ answer }) => {
-        if (
-            peerConnection.value.signalingState === 'have-local-offer' ||
-            peerConnection.value.signalingState === 'stable'
-        ) {
-          await peerConnection.value.setRemoteDescription(
-              new RTCSessionDescription(answer)
-          );
+        try {
+          if (
+              peerConnection.value.signalingState === 'have-local-offer' ||
+              peerConnection.value.signalingState === 'stable'
+          ) {
+            await peerConnection.value.setRemoteDescription(
+                new RTCSessionDescription(answer)
+            );
+
+            // Обработка всех отложенных ICE-кандидатов
+            await processPendingCandidates();
+          }
+        } catch (error) {
+          console.error('Ошибка при обработке ответа:', error);
         }
       })
       .listenForWhisper('ice-candidate', async ({ candidate }) => {
-        if (candidate) {
-          await peerConnection.value.addIceCandidate(new RTCIceCandidate(candidate));
-        }
+        await handleIceCandidate(candidate);
       });
 
   // Инициализация WebRTC
