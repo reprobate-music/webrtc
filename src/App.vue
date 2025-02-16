@@ -4,6 +4,7 @@
     <video ref="localVideo" autoplay muted></video>
     <video ref="remoteVideo" autoplay></video>
     <button @click="startCall">Начать звонок</button>
+    <button @click="answerCall" v-if="incomingOffer">Ответить на звонок</button>
     <button @click="shareScreen">Демонстрация экрана</button>
     <button @click="toggleVideo">Включить/выключить видео</button>
   </div>
@@ -11,7 +12,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import {echoInit} from "./echoInit.js";
+import { echoInit } from './echoInit.js';
 
 // Реактивные переменные
 const localVideo = ref(null);
@@ -20,6 +21,7 @@ const localStream = ref(null);
 const remoteStream = ref(null);
 const roomId = ref(null);
 const peerConnection = ref(null);
+const incomingOffer = ref(null); // Хранение входящего предложения
 
 // Конфигурация ICE-серверов (STUN/TURN)
 const iceServers = {
@@ -80,6 +82,30 @@ const startCall = async () => {
   }
 };
 
+// Ответ на звонок
+const answerCall = async () => {
+  if (!incomingOffer.value) return;
+
+  try {
+    // Установка удаленного описания (предложение от инициатора)
+    await peerConnection.value.setRemoteDescription(new RTCSessionDescription(incomingOffer.value));
+
+    // Создание ответа (answer)
+    const answer = await peerConnection.value.createAnswer();
+    await peerConnection.value.setLocalDescription(answer);
+
+    // Отправка ответа через Laravel Echo
+    window.Echo.private(`room-${roomId.value}`).whisper('answer', {
+      answer: peerConnection.value.localDescription,
+    });
+
+    // Сброс входящего предложения
+    incomingOffer.value = null;
+  } catch (error) {
+    console.error('Ошибка при ответе на звонок:', error);
+  }
+};
+
 // Демонстрация экрана
 const shareScreen = async () => {
   try {
@@ -102,36 +128,31 @@ const toggleVideo = () => {
 
 // Обработка входящих сигналов через Laravel Echo
 onMounted(async () => {
-  console.log(import.meta.env.VITE_MESSENGER_BASE_URL)
-  await echoInit()
+  console.log(import.meta.env.VITE_MESSENGER_BASE_URL);
+  await echoInit();
   roomId.value = '123'; // Получение ID комнаты из URL
 
   // Подключение к комнате
   window.Echo.private(`room-${roomId.value}`)
-      .listenForWhisper('offer', async ({offer}) => {
+      .listenForWhisper('offer', async ({ offer }) => {
         try {
-          await peerConnection.value.setRemoteDescription(new RTCSessionDescription(offer));
+          // Сохраняем входящее предложение
+          incomingOffer.value = offer;
 
-          // Создание ответа (answer)
-          const answer = await peerConnection.value.createAnswer();
-          await peerConnection.value.setLocalDescription(answer);
-
-          // Отправка ответа через Laravel Echo
-          window.Echo.private(`room-${roomId.value}`).whisper('answer', {
-            answer: peerConnection.value.localDescription,
-          });
+          // Уведомляем пользователя о входящем звонке
+          alert('Входящий звонок! Нажмите "Ответить на звонок", чтобы принять.');
         } catch (error) {
           console.error('Ошибка при обработке предложения:', error);
         }
       })
-      .listenForWhisper('answer', async ({answer}) => {
+      .listenForWhisper('answer', async ({ answer }) => {
         try {
           await peerConnection.value.setRemoteDescription(new RTCSessionDescription(answer));
         } catch (error) {
           console.error('Ошибка при обработке ответа:', error);
         }
       })
-      .listenForWhisper('ice-candidate', async ({candidate}) => {
+      .listenForWhisper('ice-candidate', async ({ candidate }) => {
         try {
           await peerConnection.value.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (error) {
