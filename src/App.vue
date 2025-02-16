@@ -1,24 +1,30 @@
 <template>
   <div>
     <h2>Комната: {{ roomId }}</h2>
+    <h3>Локальный поток:</h3>
     <video ref="localVideo" autoplay muted></video>
-    <video ref="remoteVideo" autoplay></video>
+
+    <h3>Удалённые потоки:</h3>
+    <div v-for="(stream, index) in remoteStreams" :key="index" class="video-container">
+      <video :ref="'remoteVideo-' + index" autoplay></video>
+    </div>
+
     <button @click="startCall">Начать звонок</button>
     <button @click="answerCall" v-if="incomingOffer">Ответить на звонок</button>
-    <button @click="shareScreen">Демонстрация экрана</button>
-    <button @click="toggleVideo">Включить/выключить видео</button>
+<!--    <button @click="shareScreen">Демонстрация экрана</button>-->
+<!--    <button @click="toggleVideo">Включить/выключить видео</button>-->
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import {ref, onMounted, nextTick} from 'vue';
 import { echoInit } from './echoInit.js';
 
 // Реактивные переменные
 const localVideo = ref(null);
 const remoteVideo = ref(null);
 const localStream = ref(null);
-const remoteStream = ref(null);
+const remoteStreams = ref([]);
 const roomId = ref(null);
 const peerConnection = ref(null);
 const incomingOffer = ref(null);
@@ -46,11 +52,22 @@ const initializeWebRTC = async () => {
 
     // Обработка входящих треков
     peerConnection.value.ontrack = (event) => {
-      if (!remoteStream.value) {
-        remoteStream.value = new MediaStream();
-        remoteVideo.value.srcObject = remoteStream.value;
+      console.log('RTCTrackEvent:', event);
+
+      // Проверяем, есть ли поток уже в списке
+      const stream = event.streams[0];
+      if (!remoteStreams.value.includes(stream)) {
+        remoteStreams.value.push(stream);
       }
-      remoteStream.value.addTrack(event.track);
+
+      // Динамически привязываем поток к видео-элементу
+      nextTick(() => {
+        const index = remoteStreams.value.indexOf(stream);
+        const videoElement = document.querySelector(`[ref="remoteVideo-${index}"]`);
+        if (videoElement) {
+          videoElement.srcObject = stream;
+        }
+      });
     };
 
     // Обработка ICE-кандидатов
@@ -168,3 +185,18 @@ onMounted(async () => {
   await initializeWebRTC();
 });
 </script>
+<style>
+.video-container {
+  display: inline-block;
+  margin: 10px;
+  width: 300px;
+  height: 200px;
+}
+
+video {
+  width: 100%;
+  height: 100%;
+  border: 2px solid #000;
+  border-radius: 10px;
+}
+</style>
