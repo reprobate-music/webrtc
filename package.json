@@ -9,8 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "peerjs": "^1.5.4",
-    "vue": "^3.4.29"
+    "axios": "^1.7.9",
+    "laravel-echo": "^2.0.0",
+    "pusher-js": "^8.4.0",
+    "vue": "^3.4.29",
+    "dotenv": "^16.4.5"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.5",

@@ -1,90 +1,145 @@
-<script setup>
-import { Peer } from "peerjs";
-import {onMounted, reactive, ref} from "vue";
-
-const peerID = ref('')
-const connectId = ref('')
-let peer = reactive(null)
-let peerCall = reactive(null)
-let connect = reactive(null)
-let localStream = reactive(null)
-const remoteVideo = ref(null)
-
-const startAudioCall = async () => {
-  connect = peer.connect(connectId.value);
-  connect.on('open', function() {
-    console.log('Connected to ' + connectId.value);
-    connect.on('data', function(data) {
-      console.log('Received data:', data);
-    });
-  });
-  connect.on('error', function(err) {
-    console.error('Connection error:', err);
-  });
-  connect.on('close', function() {
-    console.log('Соединение закрыто');
-  });
-  localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-  peerCall = peer.call(connectId.value, localStream);
-  peerCall.on('stream', function (stream) {
-    remoteVideo.value.srcObject = stream
-  })
-}
-
-const endAudioCall = () => {
-  if (connect) connect.close();
-  if (localStream) localStream.getTracks().forEach(track => track.stop());
-  if (peerCall) peerCall = null
-  if (peer) peer.destroy();
-  remoteVideo.value.srcObject = null;
-}
-const init = () => {
-  peer = new Peer();
-  peer.on('open', function(id) {
-    peerID.value = id
-  })
-  peer.on('connection', function(dataConnection) {
-    console.log('peer connection to ' + dataConnection.peer)
-  });
-  peer.on('close', function() {
-    console.log('peer close')
-    endAudioCall()
-  });
-  peer.on('disconnected', function() {
-    console.log('peer disconnected')
-    endAudioCall()
-  });
-  peer.on('error', function(err) {
-    console.log('peer error', err)
-  });
-  peer.on('call', async call => {
-    const answer = confirm('Вам звонок. Ответить?')
-    if (answer) {
-      localStream = await navigator.mediaDevices.getUserMedia({video: false, audio: true});
-      call.answer(localStream);
-      call.on('stream', stream => {
-        remoteVideo.value.srcObject = stream;
-      });
-    }
-  });
-}
-onMounted(() => {
-  init()
-})
-</script>
-
 <template>
-  <section class="card">
-    <div class="">My peer ID is: {{ peerID }}</div>
-    <input type="text" placeholder="ID кому хочешь набрать" v-model="connectId">
-    <div class="flex">
-      <video ref="remoteVideo" autoplay></video>
-    </div>
-    <button @click="startAudioCall">Начать аудиозвонок</button>
-    <button @click="endAudioCall">Завершить аудиозвонок</button>
-  </section>
+  <div>
+    <h2>Комната: {{ roomId }}</h2>
+    <video ref="localVideo" autoplay muted></video>
+    <video ref="remoteVideo" autoplay></video>
+    <button @click="startCall">Начать звонок</button>
+    <button @click="shareScreen">Демонстрация экрана</button>
+    <button @click="toggleVideo">Включить/выключить видео</button>
+  </div>
 </template>
 
-<style scoped>
+<script setup>
+import { ref, onMounted } from 'vue';
+import {echoInit} from "./echoInit.js";
 
-</style>
+// Реактивные переменные
+const localVideo = ref(null);
+const remoteVideo = ref(null);
+const localStream = ref(null);
+const remoteStream = ref(null);
+const roomId = ref(null);
+const peerConnection = ref(null);
+
+// Конфигурация ICE-серверов (STUN/TURN)
+const iceServers = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' }, // Google STUN
+    // Добавьте TURN-серверы при необходимости
+  ],
+};
+
+// Инициализация WebRTC
+const initializeWebRTC = async () => {
+  try {
+    // Получение локального медиапотока (аудио и видео)
+    localStream.value = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localVideo.value.srcObject = localStream.value;
+
+    // Создание RTCPeerConnection
+    peerConnection.value = new RTCPeerConnection(iceServers);
+
+    // Добавление локального медиапотока в соединение
+    localStream.value.getTracks().forEach((track) => {
+      peerConnection.value.addTrack(track, localStream.value);
+    });
+
+    // Обработка входящих треков
+    peerConnection.value.ontrack = (event) => {
+      remoteStream.value = event.streams[0];
+      remoteVideo.value.srcObject = remoteStream.value;
+    };
+
+    // Обработка ICE-кандидатов
+    peerConnection.value.onicecandidate = (event) => {
+      if (event.candidate) {
+        // Отправка ICE-кандидата через Laravel Echo
+        window.Echo.private(`room-${roomId.value}`).whisper('ice-candidate', {
+          candidate: event.candidate,
+        });
+      }
+    };
+  } catch (error) {
+    console.error('Ошибка при инициализации WebRTC:', error);
+  }
+};
+
+// Начало звонка
+const startCall = async () => {
+  try {
+    // Создание предложения (offer)
+    const offer = await peerConnection.value.createOffer();
+    await peerConnection.value.setLocalDescription(offer);
+
+    // Отправка предложения через Laravel Echo
+    window.Echo.private(`room-${roomId.value}`).whisper('offer', {
+      offer: peerConnection.value.localDescription,
+    });
+  } catch (error) {
+    console.error('Ошибка при создании предложения:', error);
+  }
+};
+
+// Демонстрация экрана
+const shareScreen = async () => {
+  try {
+    const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    const screenTrack = screenStream.getVideoTracks()[0];
+
+    // Замена локального видео на экран
+    const sender = peerConnection.value.getSenders().find((s) => s.track.kind === 'video');
+    sender.replaceTrack(screenTrack);
+  } catch (error) {
+    console.error('Ошибка при демонстрации экрана:', error);
+  }
+};
+
+// Включение/выключение видео
+const toggleVideo = () => {
+  const videoTrack = localStream.value.getVideoTracks()[0];
+  videoTrack.enabled = !videoTrack.enabled;
+};
+
+// Обработка входящих сигналов через Laravel Echo
+onMounted(async () => {
+  console.log(import.meta.env.VITE_MESSENGER_BASE_URL)
+  await echoInit()
+  roomId.value = '123'; // Получение ID комнаты из URL
+
+  // Подключение к комнате
+  window.Echo.private(`room-${roomId.value}`)
+      .listenForWhisper('offer', async ({offer}) => {
+        try {
+          await peerConnection.value.setRemoteDescription(new RTCSessionDescription(offer));
+
+          // Создание ответа (answer)
+          const answer = await peerConnection.value.createAnswer();
+          await peerConnection.value.setLocalDescription(answer);
+
+          // Отправка ответа через Laravel Echo
+          window.Echo.private(`room-${roomId.value}`).whisper('answer', {
+            answer: peerConnection.value.localDescription,
+          });
+        } catch (error) {
+          console.error('Ошибка при обработке предложения:', error);
+        }
+      })
+      .listenForWhisper('answer', async ({answer}) => {
+        try {
+          await peerConnection.value.setRemoteDescription(new RTCSessionDescription(answer));
+        } catch (error) {
+          console.error('Ошибка при обработке ответа:', error);
+        }
+      })
+      .listenForWhisper('ice-candidate', async ({candidate}) => {
+        try {
+          await peerConnection.value.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (error) {
+          console.error('Ошибка при добавлении ICE-кандидата:', error);
+        }
+      });
+
+  // Инициализация WebRTC
+  await initializeWebRTC();
+});
+</script>
