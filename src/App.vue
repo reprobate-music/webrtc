@@ -50,6 +50,19 @@ const initializeWebRTC = async () => {
       peerConnection.value.addTrack(track, localStream.value);
     });
 
+    peerConnection.value.oniceconnectionstatechange = () => {
+      console.log('ICE Connection State:', peerConnection.value.iceConnectionState);
+
+      if (peerConnection.value.iceConnectionState === 'failed') {
+        console.log('Переустановка соединения...');
+        peerConnection.value.restartIce(); // Перезапуск ICE-кандидатов
+      }
+    };
+
+    peerConnection.value.onconnectionstatechange = () => {
+      console.log('Connection State:', peerConnection.value.connectionState);
+    };
+
     // Обработка входящих треков
     peerConnection.value.ontrack = (event) => {
       console.log('RTCTrackEvent:', event);
@@ -82,12 +95,16 @@ const initializeWebRTC = async () => {
     };
 
     // Обработка ICE-кандидатов
-    peerConnection.value.onicecandidate = (event) => {
+    peerConnection.value.onicecandidate = async (event) => {
       if (event.candidate) {
-        // Отправка ICE-кандидатов через Laravel Echo
-        window.Echo.private(`room-${roomId.value}`).whisper('ice-candidate', {
-          candidate: event.candidate,
-        });
+        try {
+          await window.Echo.private(`room-${roomId.value}`).whisper('ice-candidate', {
+            candidate: event.candidate,
+          });
+          console.log('ICE-кандидат отправлен:', event.candidate);
+        } catch (error) {
+          console.error('Ошибка отправки ICE-кандидата:', error);
+        }
       }
     };
   } catch (error) {
@@ -189,7 +206,12 @@ onMounted(async () => {
         }
       })
       .listenForWhisper('ice-candidate', async ({ candidate }) => {
-        await handleIceCandidate(candidate);
+        console.log('Получен ICE-кандидат:', candidate);
+        try {
+          await handleIceCandidate(candidate);
+        } catch (error) {
+          console.error('Ошибка при обработке ICE-кандидата:', error);
+        }
       });
 
   // Инициализация WebRTC
