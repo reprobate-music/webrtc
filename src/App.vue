@@ -5,8 +5,8 @@
     <video ref="localVideo" autoplay muted></video>
 
     <h3>Удалённые потоки:</h3>
-    <div v-for="(stream, index) in remoteStreams" :key="index" class="video-container">
-      <audio :ref="'remoteVideo-' + index" autoplay controls></audio>
+    <div class="video-container">
+
     </div>
 
     <button @click="startCall">Начать звонок</button>
@@ -62,12 +62,22 @@ const initializeWebRTC = async () => {
 
       // Динамически привязываем поток к видео-элементу
       nextTick(() => {
-        const index = remoteStreams.value.indexOf(stream);
-        const videoElement = document.querySelector(`[ref="remoteVideo-${index}"]`);
-        if (videoElement) {
-          videoElement.srcObject = stream;
-
-        }
+        remoteStreams.value.forEach((_stream) => {
+          const audio = document.createElement('audio')
+          audio.autoplay = true
+          audio.muted = false
+          audio.volume = 1.0
+          audio.srcObject = _stream
+          audio.addEventListener('loadedmetadata', async () => {
+            try {
+              await audio.play()
+              console.log('Аудио воспроизводится')
+            } catch (err) {
+              console.error('Ошибка воспроизведения:', err)
+            }
+          })
+          document.querySelector('.video-container').appendChild(audio)
+        })
       });
     };
 
