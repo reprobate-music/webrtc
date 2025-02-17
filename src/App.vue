@@ -32,7 +32,31 @@ const pendingCandidates = ref([]); // Буфер для ICE-кандидатов
 
 // Конфигурация ICE-серверов
 const iceServers = {
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+  iceServers: [
+    {
+      urls: "stun:stun.relay.metered.ca:80",
+    },
+    {
+      urls: "turn:global.relay.metered.ca:80",
+      username: "d5e54dbbddbdd3648f9e7048",
+      credential: "nNLgZr7pgrx1q+K5",
+    },
+    {
+      urls: "turn:global.relay.metered.ca:80?transport=tcp",
+      username: "d5e54dbbddbdd3648f9e7048",
+      credential: "nNLgZr7pgrx1q+K5",
+    },
+    {
+      urls: "turn:global.relay.metered.ca:443",
+      username: "d5e54dbbddbdd3648f9e7048",
+      credential: "nNLgZr7pgrx1q+K5",
+    },
+    {
+      urls: "turns:global.relay.metered.ca:443?transport=tcp",
+      username: "d5e54dbbddbdd3648f9e7048",
+      credential: "nNLgZr7pgrx1q+K5",
+    },
+  ],
 };
 
 // Инициализация WebRTC
