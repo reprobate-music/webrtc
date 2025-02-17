@@ -6,7 +6,7 @@
 
     <h3>Удалённые потоки:</h3>
     <div v-for="(stream, index) in remoteStreams" :key="index" class="video-container">
-      <video :ref="'remoteVideo-' + index" autoplay></video>
+      <audio :ref="'remoteVideo-' + index" autoplay controls></audio>
     </div>
 
     <button @click="startCall">Начать звонок</button>
@@ -39,7 +39,7 @@ const iceServers = {
 const initializeWebRTC = async () => {
   try {
     // Получение локального медиапотока
-    localStream.value = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localStream.value = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
     localVideo.value.srcObject = localStream.value;
 
     // Создание RTCPeerConnection
@@ -66,6 +66,7 @@ const initializeWebRTC = async () => {
         const videoElement = document.querySelector(`[ref="remoteVideo-${index}"]`);
         if (videoElement) {
           videoElement.srcObject = stream;
+
         }
       });
     };
